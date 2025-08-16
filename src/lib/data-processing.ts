@@ -32,6 +32,7 @@ export interface DailyMetrics {
   avgRemainingCapacityGB: number;
   clusterCount: number;
   clusters: string[];
+  avgUnhealthyNodes: number;  // Added: utilize MaxMRUnhealthyNodes data
 }
 
 // Weekly KPI metrics interface
@@ -100,29 +101,65 @@ export interface FilterOptions {
 }
 
 /**
- * Calculates memory usage percentage from allocated and total memory
+ * Calculates memory usage percentage from allocated and total memory with validation
  * @param allocatedMB - Memory allocated in MB
  * @param totalMB - Total memory available in MB
  * @returns Memory usage percentage (0-100)
  */
 function calculateMemoryUsagePercent(allocatedMB: number, totalMB: number): number {
+  // Input validation
+  if (typeof allocatedMB !== 'number' || typeof totalMB !== 'number') {
+    console.warn(`Invalid memory values: allocated=${allocatedMB}, total=${totalMB}`);
+    return 0;
+  }
+  
   if (totalMB === 0) return 0;
+  if (allocatedMB < 0 || totalMB < 0) {
+    console.warn(`Negative memory values: allocated=${allocatedMB}MB, total=${totalMB}MB`);
+    return 0;
+  }
+  
+  // Handle data inconsistency
+  if (allocatedMB > totalMB) {
+    console.warn(`Allocated memory (${allocatedMB}MB) exceeds total memory (${totalMB}MB)`);
+    return 100; // Cap at 100%
+  }
+  
   return (allocatedMB / totalMB) * 100;
 }
 
 /**
- * Calculates runtime hours between creation and end dates
+ * Calculates runtime hours between creation and end dates with robust error handling
  * @param creationDateTime - Cluster creation timestamp
  * @param endDateTime - Cluster termination timestamp
- * @returns Runtime in hours
+ * @returns Runtime in hours (0 if invalid)
  */
 function calculateRuntimeHours(creationDateTime: string, endDateTime: string): number {
   try {
+    // Input validation
+    if (!creationDateTime || !endDateTime) {
+      return 0;
+    }
+    
     const startDate = parseISO(creationDateTime);
     const endDate = parseISO(endDateTime);
-    return differenceInHours(endDate, startDate);
+    
+    // Validate parsed dates
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      console.warn(`Invalid date format: start=${creationDateTime}, end=${endDateTime}`);
+      return 0;
+    }
+    
+    // Ensure logical order
+    if (endDate < startDate) {
+      console.warn(`End date before start date: start=${creationDateTime}, end=${endDateTime}`);
+      return 0;
+    }
+    
+    const hours = differenceInHours(endDate, startDate);
+    return Math.max(0, hours); // Ensure non-negative
   } catch (error) {
-    console.warn('Error calculating runtime hours:', error);
+    console.warn(`Error calculating runtime hours for ${creationDateTime} to ${endDateTime}:`, error);
     return 0;
   }
 }
@@ -220,6 +257,7 @@ export function aggregateDataByDay(data: EMRClusterRecord[]): DailyMetrics[] {
     const yarnMemoryAvailable = records.map(r => r.MinYARNMemoryAvailablePercentage);
     const runtimeHours = records.map(r => calculateRuntimeHours(r.CreationDateTime, r.EndDateTime));
     const remainingCapacities = records.map(r => r.MinCapacityRemainingGB);
+    const unhealthyNodes = records.map(r => r.MaxMRUnhealthyNodes || 0);  // Added: utilize unhealthy nodes data
     const uniqueClusters = new Set(records.map(r => r.ClusterName));
 
     dailyMetrics.push({
@@ -229,7 +267,8 @@ export function aggregateDataByDay(data: EMRClusterRecord[]): DailyMetrics[] {
       avgRuntimeHours: calculateAverage(runtimeHours),
       avgRemainingCapacityGB: calculateAverage(remainingCapacities),
       clusterCount: uniqueClusters.size,
-      clusters: Array.from(uniqueClusters)
+      clusters: Array.from(uniqueClusters),
+      avgUnhealthyNodes: calculateAverage(unhealthyNodes)  // Added: track unhealthy nodes
     });
   }
 
@@ -332,7 +371,7 @@ export function calculateKPIDeltas(current: WeeklyKPIs, previous: WeeklyKPIs): W
 
 /**
  * Computes a daily health score (0-100) using threshold-based penalties
- * Lower memory usage, higher YARN availability, and higher remaining capacity improve the score.
+ * Lower memory usage, higher YARN availability, higher remaining capacity, and fewer unhealthy nodes improve the score.
  * @param dailyMetrics - Array of daily metrics
  */
 export function computeHealthSummary(dailyMetrics: DailyMetrics[]): HealthSummary {
@@ -342,7 +381,9 @@ export function computeHealthSummary(dailyMetrics: DailyMetrics[]): HealthSummar
     const memoryPenalty = Math.max(0, d.avgMemoryUsagePercent - 80) * 1.2; // penalize over 80%
     const yarnPenalty = Math.max(0, 30 - d.avgYARNMemoryAvailablePercent) * 1.5; // penalize under 30%
     const capacityPenalty = Math.max(0, 200 - d.avgRemainingCapacityGB) * 0.1; // penalize under 200GB
-    const rawScore = 100 - (memoryPenalty + yarnPenalty + capacityPenalty);
+    const unhealthyNodesPenalty = d.avgUnhealthyNodes * 2.0; // penalize any unhealthy nodes (Added: new penalty)
+    
+    const rawScore = 100 - (memoryPenalty + yarnPenalty + capacityPenalty + unhealthyNodesPenalty);
     return { date: d.date, score: clamp(rawScore, 0, 100) };
   });
 
@@ -443,14 +484,201 @@ export function computeAnalyticsBundle(dailyMetrics: DailyMetrics[]): AnalyticsB
 }
 
 /**
- * Calculates the average of an array of numbers
+ * Calculates the average of an array of numbers with validation
  * @param numbers - Array of numbers
- * @returns Average value
+ * @returns Average value (0 if invalid input)
  */
 function calculateAverage(numbers: number[]): number {
-  if (numbers.length === 0) return 0;
-  const sum = numbers.reduce((acc, num) => acc + num, 0);
-  return sum / numbers.length;
+  if (!Array.isArray(numbers) || numbers.length === 0) return 0;
+  
+  // Filter out invalid values (NaN, null, undefined, infinite)
+  const validNumbers = numbers.filter(num => 
+    typeof num === 'number' && 
+    !isNaN(num) && 
+    isFinite(num)
+  );
+  
+  if (validNumbers.length === 0) return 0;
+  
+  const sum = validNumbers.reduce((acc, num) => acc + num, 0);
+  return sum / validNumbers.length;
+}
+
+/**
+ * KPI metrics interface for the dashboard cards
+ */
+export interface KPIMetrics {
+  avgMemoryUsagePercent: number;
+  avgYARNMemoryAvailablePercent: number;
+  avgRuntimeHours: number;
+  avgRemainingCapacityGB: number;
+  clusterCount: number;
+}
+
+/**
+ * Date filter options for metrics calculation
+ */
+export interface DateFilterOptions {
+  type: 'daily' | 'weekly' | 'custom';
+  startDate: Date;
+  endDate: Date;
+}
+
+/**
+ * Calculates KPI metrics from filtered data based on date range
+ * @param data - Array of EMR cluster records
+ * @param dateFilter - Date filter options
+ * @returns KPI metrics for the specified period
+ */
+export function calculateFilteredKPIMetrics(
+  data: EMRClusterRecord[], 
+  dateFilter: DateFilterOptions
+): KPIMetrics {
+  // Filter data by date range
+  const filteredData = filterEMRData(data, {
+    startDate: dateFilter.startDate,
+    endDate: dateFilter.endDate
+  });
+
+  if (filteredData.length === 0) {
+    return {
+      avgMemoryUsagePercent: 0,
+      avgYARNMemoryAvailablePercent: 0,
+      avgRuntimeHours: 0,
+      avgRemainingCapacityGB: 0,
+      clusterCount: 0
+    };
+  }
+
+  // Calculate memory usage percentages
+  const memoryUsages = filteredData.map(record => 
+    calculateMemoryUsagePercent(record.MaxMemoryAllocatedMB, record.MaxMemoryTotalMB)
+  );
+
+  // Calculate runtime hours for each cluster
+  const runtimeHours = filteredData.map(record => 
+    calculateRuntimeHours(record.CreationDateTime, record.EndDateTime)
+  );
+
+  // Get YARN memory available percentages
+  const yarnMemoryAvailable = filteredData.map(record => 
+    record.MinYARNMemoryAvailablePercentage
+  );
+
+  // Get remaining capacity values
+  const remainingCapacities = filteredData.map(record => 
+    record.MinCapacityRemainingGB
+  );
+
+  // Count unique clusters in the period
+  const uniqueClusters = new Set(filteredData.map(record => record.ClusterName));
+
+  return {
+    avgMemoryUsagePercent: calculateAverage(memoryUsages),
+    avgYARNMemoryAvailablePercent: calculateAverage(yarnMemoryAvailable),
+    avgRuntimeHours: calculateAverage(runtimeHours),
+    avgRemainingCapacityGB: calculateAverage(remainingCapacities),
+    clusterCount: uniqueClusters.size
+  };
+}
+
+/**
+ * Calculates KPI metrics aggregated by day for time series visualization
+ * @param data - Array of EMR cluster records
+ * @param dateFilter - Date filter options
+ * @returns Array of daily KPI metrics
+ */
+export function calculateDailyKPIMetrics(
+  data: EMRClusterRecord[], 
+  dateFilter: DateFilterOptions
+): Array<{ date: string } & KPIMetrics> {
+  // Get daily aggregated data
+  const dailyData = aggregateDataByDay(filterEMRData(data, {
+    startDate: dateFilter.startDate,
+    endDate: dateFilter.endDate
+  }));
+
+  return dailyData.map(day => ({
+    date: day.date,
+    avgMemoryUsagePercent: day.avgMemoryUsagePercent,
+    avgYARNMemoryAvailablePercent: day.avgYARNMemoryAvailablePercent,
+    avgRuntimeHours: day.avgRuntimeHours,
+    avgRemainingCapacityGB: day.avgRemainingCapacityGB,
+    clusterCount: day.clusterCount
+  }));
+}
+
+/**
+ * Calculates KPI metrics aggregated by week for time series visualization
+ * @param data - Array of EMR cluster records
+ * @param dateFilter - Date filter options
+ * @returns Array of weekly KPI metrics
+ */
+export function calculateWeeklyKPIMetrics(
+  data: EMRClusterRecord[], 
+  dateFilter: DateFilterOptions
+): Array<{ week: string } & KPIMetrics> {
+  const dailyData = aggregateDataByDay(filterEMRData(data, {
+    startDate: dateFilter.startDate,
+    endDate: dateFilter.endDate
+  }));
+
+  // Group daily data by week
+  const weeklyGroups = new Map<string, DailyMetrics[]>();
+  
+  dailyData.forEach(day => {
+    const date = parseISO(day.date);
+    const weekStart = format(date.getTime() - (date.getDay() * 24 * 60 * 60 * 1000), 'yyyy-MM-dd');
+    
+    if (!weeklyGroups.has(weekStart)) {
+      weeklyGroups.set(weekStart, []);
+    }
+    weeklyGroups.get(weekStart)!.push(day);
+  });
+
+  // Calculate weekly averages
+  const weeklyMetrics: Array<{ week: string } & KPIMetrics> = [];
+  
+  for (const [weekStart, days] of weeklyGroups.entries()) {
+    const allClusters = new Set<string>();
+    days.forEach(day => day.clusters.forEach(cluster => allClusters.add(cluster)));
+
+    weeklyMetrics.push({
+      week: weekStart,
+      avgMemoryUsagePercent: calculateAverage(days.map(d => d.avgMemoryUsagePercent)),
+      avgYARNMemoryAvailablePercent: calculateAverage(days.map(d => d.avgYARNMemoryAvailablePercent)),
+      avgRuntimeHours: calculateAverage(days.map(d => d.avgRuntimeHours)),
+      avgRemainingCapacityGB: calculateAverage(days.map(d => d.avgRemainingCapacityGB)),
+      clusterCount: allClusters.size
+    });
+  }
+
+  return weeklyMetrics.sort((a, b) => a.week.localeCompare(b.week));
+}
+
+/**
+ * Gets chart data formatted for the specific metrics with date filtering
+ * @param data - Array of EMR cluster records
+ * @param dateFilter - Date filter options
+ * @param metric - Specific metric to extract
+ * @returns Chart data points
+ */
+export function getChartDataForMetric(
+  data: EMRClusterRecord[],
+  dateFilter: DateFilterOptions,
+  metric: keyof KPIMetrics
+): Array<{ date: string; value: number; label?: string }> {
+  const timeSeriesData = dateFilter.type === 'weekly' 
+    ? calculateWeeklyKPIMetrics(data, dateFilter)
+    : calculateDailyKPIMetrics(data, dateFilter);
+
+  return timeSeriesData.map(point => ({
+    date: 'week' in point ? point.week : point.date,
+    value: point[metric] as number,
+    label: metric === 'clusterCount' ? `${point[metric]} clusters` : 
+           metric === 'avgRuntimeHours' ? `${(point[metric] as number).toFixed(1)}h` :
+           `${(point[metric] as number).toFixed(1)}${metric.includes('Percent') ? '%' : 'GB'}`
+  }));
 }
 
 /**
@@ -467,6 +695,7 @@ export function exportToCSV(dailyMetrics: DailyMetrics[]): string {
     'Avg YARN Memory Available %',
     'Avg Runtime Hours',
     'Avg Remaining Capacity GB',
+    'Avg Unhealthy Nodes',  // Added: new metric in export
     'Cluster Count',
     'Clusters'
   ];
@@ -479,6 +708,7 @@ export function exportToCSV(dailyMetrics: DailyMetrics[]): string {
       metric.avgYARNMemoryAvailablePercent.toFixed(2),
       metric.avgRuntimeHours.toFixed(2),
       metric.avgRemainingCapacityGB.toFixed(2),
+      metric.avgUnhealthyNodes.toFixed(2),  // Added: new metric value
       metric.clusterCount,
       metric.clusters.join(';')
     ].join(','))

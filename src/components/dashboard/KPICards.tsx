@@ -2,23 +2,48 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Building, Gauge, Clock, Database, Zap } from "lucide-react";
+import { Building, Gauge, Clock, Database, Activity } from "lucide-react";
+
+interface FilteredMetrics {
+  avgMemoryUsagePercent: number;
+  avgYARNMemoryAvailablePercent: number;
+  avgRuntimeHours: number;
+  avgRemainingCapacityGB: number;
+  clusterCount: number;
+}
 
 interface KPICardsProps {
   analytics: {
     totalClusters: number;
     avgMemoryUsage: number;
     totalRuntimeHours: number;
-    capacityUsed: number;
+    totalRemainingCapacityGB: number;  // Fixed: corrected from misleading "capacityUsed"
     activeClusters: number;
   } | undefined;
+  filteredMetrics?: FilteredMetrics;
   isLoading: boolean;
   filteredClusters?: any[];
   activeFilter?: { type: string; value: string } | null;
+  dateFilterActive?: boolean;
 }
 
-export function KPICards({ analytics, isLoading, filteredClusters = [], activeFilter }: KPICardsProps) {
+export function KPICards({ 
+  analytics, 
+  filteredMetrics, 
+  isLoading,
+  dateFilterActive = false 
+}: KPICardsProps) {
   const [showDetailModal, setShowDetailModal] = useState<string | null>(null);
+  
+  // Use filtered metrics if available, otherwise fall back to analytics
+  const displayMetrics = filteredMetrics || {
+    avgMemoryUsagePercent: analytics?.avgMemoryUsage || 0,
+    avgYARNMemoryAvailablePercent: 0, // Not available in original analytics
+    avgRuntimeHours: analytics ? analytics.totalRuntimeHours / Math.max(analytics.totalClusters, 1) : 0,
+    avgRemainingCapacityGB: analytics?.totalRemainingCapacityGB || 0,  // Fixed: updated field name
+    clusterCount: analytics?.totalClusters || 0
+  };
+
   if (isLoading || !analytics) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
@@ -37,49 +62,54 @@ export function KPICards({ analytics, isLoading, filteredClusters = [], activeFi
 
   const kpiData = [
     {
-      title: "Total Clusters",
-      value: analytics.totalClusters.toString(),
-      icon: Building,
-      change: "+12%",
-      changeLabel: "vs last period",
-      changeType: "positive" as const,
-      color: "blue",
-    },
-    {
-      title: "Avg Memory Usage",
-      value: `${analytics.avgMemoryUsage.toFixed(1)}%`,
+      title: "Avg Memory Usage %",
+      value: `${displayMetrics.avgMemoryUsagePercent.toFixed(1)}%`,
       icon: Gauge,
-      change: "-5%",
-      changeLabel: "from peak",
-      changeType: "neutral" as const,
+      change: displayMetrics.avgMemoryUsagePercent > 80 ? "High" : displayMetrics.avgMemoryUsagePercent > 50 ? "Medium" : "Low",
+      changeLabel: "utilization level",
+      changeType: displayMetrics.avgMemoryUsagePercent > 80 ? "negative" : "positive" as const,
       color: "emerald",
+      key: "memory"
     },
     {
-      title: "Runtime Hours",
-      value: `${Math.round(analytics.totalRuntimeHours)}h`,
+      title: "Avg YARN Avail %", 
+      value: `${displayMetrics.avgYARNMemoryAvailablePercent.toFixed(1)}%`,
+      icon: Activity,
+      change: displayMetrics.avgYARNMemoryAvailablePercent > 50 ? "Healthy" : displayMetrics.avgYARNMemoryAvailablePercent > 20 ? "Moderate" : "Low",
+      changeLabel: "availability status",
+      changeType: displayMetrics.avgYARNMemoryAvailablePercent > 20 ? "positive" : "negative" as const,
+      color: "blue",
+      key: "yarn"
+    },
+    {
+      title: "Avg Runtime Hours",
+      value: `${displayMetrics.avgRuntimeHours.toFixed(1)}h`,
       icon: Clock,
-      change: "24.5h",
-      changeLabel: "avg per cluster",
+      change: `${displayMetrics.clusterCount} clusters`,
+      changeLabel: "in period",
       changeType: "neutral" as const,
       color: "purple",
+      key: "runtime"
     },
     {
-      title: "Capacity Used",
-      value: `${analytics.capacityUsed.toFixed(0)}GB`,
+      title: "Avg Remaining Capacity GB",
+      value: `${displayMetrics.avgRemainingCapacityGB.toFixed(0)}GB`,
       icon: Database,
-      change: "85%",
-      changeLabel: "efficiency",
-      changeType: "positive" as const,
+      change: displayMetrics.avgRemainingCapacityGB > 500 ? "Abundant" : displayMetrics.avgRemainingCapacityGB > 200 ? "Adequate" : "Limited",
+      changeLabel: "capacity status",
+      changeType: displayMetrics.avgRemainingCapacityGB > 200 ? "positive" : "negative" as const,
       color: "rose",
+      key: "capacity"
     },
     {
-      title: "Active Clusters",
-      value: analytics.activeClusters.toString(),
-      icon: Zap,
-      change: "98.5%",
-      changeLabel: "uptime",
-      changeType: "positive" as const,
+      title: "Cluster Count",
+      value: displayMetrics.clusterCount.toString(),
+      icon: Building,
+      change: dateFilterActive ? "Filtered" : "Total",
+      changeLabel: "clusters shown",
+      changeType: "neutral" as const,
       color: "cyan",
+      key: "count"
     },
   ];
 
@@ -124,54 +154,62 @@ export function KPICards({ analytics, isLoading, filteredClusters = [], activeFi
             </div>
           </DialogHeader>
           <div className="space-y-4">
-            {showDetailModal === 'Total Clusters' && (
+            {showDetailModal === 'Avg Memory Usage %' && (
               <div className="space-y-2">
-                <p className="text-sm text-slate-600">Current Status: <span className="font-medium">{analytics?.totalClusters || 0} clusters loaded</span></p>
-                {activeFilter ? (
-                  <p className="text-sm text-slate-600">Filtered View: <span className="font-medium">{filteredClusters.length} clusters ({activeFilter.value})</span></p>
+                <p className="text-sm text-slate-600">Current Average: <span className="font-medium">{displayMetrics.avgMemoryUsagePercent.toFixed(1)}%</span></p>
+                {dateFilterActive ? (
+                  <p className="text-sm text-slate-600">Time Period: <span className="font-medium">Filtered data</span></p>
                 ) : (
-                  <p className="text-sm text-slate-600">All clusters are currently displayed</p>
-                )}
-                <div className="bg-blue-50 p-3 rounded-lg">
-                  <p className="text-xs text-blue-800">💡 Tip: Click on chart segments to filter data by specific clusters</p>
-                </div>
-              </div>
-            )}
-            {showDetailModal === 'Avg Memory Usage' && (
-              <div className="space-y-2">
-                <p className="text-sm text-slate-600">Current Average: <span className="font-medium">{analytics?.avgMemoryUsage.toFixed(1)}%</span></p>
-                {activeFilter && filteredClusters.length > 0 && (
-                  <p className="text-sm text-slate-600">For {activeFilter.value}: Processing filtered data...</p>
+                  <p className="text-sm text-slate-600">All available data displayed</p>
                 )}
                 <div className="bg-emerald-50 p-3 rounded-lg">
-                  <p className="text-xs text-emerald-800">📊 This represents the average memory utilization across all clusters</p>
+                  <p className="text-xs text-emerald-800">📊 Average memory utilization calculated from MaxMemoryAllocated/MaxMemoryTotal across clusters</p>
                 </div>
               </div>
             )}
-            {showDetailModal === 'Runtime Hours' && (
+            {showDetailModal === 'Avg YARN Avail %' && (
               <div className="space-y-2">
-                <p className="text-sm text-slate-600">Total Runtime: <span className="font-medium">{Math.round(analytics?.totalRuntimeHours || 0)} hours</span></p>
-                <p className="text-sm text-slate-600">Average per Cluster: <span className="font-medium">{analytics?.totalClusters ? (analytics.totalRuntimeHours / analytics.totalClusters).toFixed(1) : 0} hours</span></p>
+                <p className="text-sm text-slate-600">Current Average: <span className="font-medium">{displayMetrics.avgYARNMemoryAvailablePercent.toFixed(1)}%</span></p>
+                <p className="text-sm text-slate-600">Status: <span className="font-medium">
+                  {displayMetrics.avgYARNMemoryAvailablePercent > 50 ? "Healthy" : 
+                   displayMetrics.avgYARNMemoryAvailablePercent > 20 ? "Moderate" : "Critical"}
+                </span></p>
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-xs text-blue-800">🧮 YARN memory availability indicates remaining capacity for new applications</p>
+                </div>
+              </div>
+            )}
+            {showDetailModal === 'Avg Runtime Hours' && (
+              <div className="space-y-2">
+                <p className="text-sm text-slate-600">Average Runtime: <span className="font-medium">{displayMetrics.avgRuntimeHours.toFixed(1)} hours</span></p>
+                <p className="text-sm text-slate-600">Cluster Count: <span className="font-medium">{displayMetrics.clusterCount} clusters</span></p>
                 <div className="bg-purple-50 p-3 rounded-lg">
-                  <p className="text-xs text-purple-800">⏱️ Runtime is calculated from cluster creation to termination time</p>
+                  <p className="text-xs text-purple-800">⏱️ Average runtime calculated from cluster creation to termination across the selected period</p>
                 </div>
               </div>
             )}
-            {showDetailModal === 'Capacity Used' && (
+            {showDetailModal === 'Avg Remaining Capacity GB' && (
               <div className="space-y-2">
-                <p className="text-sm text-slate-600">Total Capacity: <span className="font-medium">{analytics?.capacityUsed.toFixed(1)} GB</span></p>
-                <p className="text-sm text-slate-600">Efficiency Rate: <span className="font-medium">85%</span></p>
+                <p className="text-sm text-slate-600">Average Capacity: <span className="font-medium">{displayMetrics.avgRemainingCapacityGB.toFixed(1)} GB</span></p>
+                <p className="text-sm text-slate-600">Status: <span className="font-medium">
+                  {displayMetrics.avgRemainingCapacityGB > 500 ? "Abundant" : 
+                   displayMetrics.avgRemainingCapacityGB > 200 ? "Adequate" : "Limited"}
+                </span></p>
                 <div className="bg-rose-50 p-3 rounded-lg">
-                  <p className="text-xs text-rose-800">💾 Represents total allocated memory across all cluster instances</p>
+                  <p className="text-xs text-rose-800">💾 Average remaining storage capacity across clusters in the selected period</p>
                 </div>
               </div>
             )}
-            {showDetailModal === 'Active Clusters' && (
+            {showDetailModal === 'Cluster Count' && (
               <div className="space-y-2">
-                <p className="text-sm text-slate-600">Currently Active: <span className="font-medium">{analytics?.activeClusters || 0}</span></p>
-                <p className="text-sm text-slate-600">Total Processed: <span className="font-medium">{analytics?.totalClusters || 0}</span></p>
+                <p className="text-sm text-slate-600">Cluster Count: <span className="font-medium">{displayMetrics.clusterCount} clusters</span></p>
+                {dateFilterActive ? (
+                  <p className="text-sm text-slate-600">View: <span className="font-medium">Filtered by date range</span></p>
+                ) : (
+                  <p className="text-sm text-slate-600">View: <span className="font-medium">All clusters</span></p>
+                )}
                 <div className="bg-cyan-50 p-3 rounded-lg">
-                  <p className="text-xs text-cyan-800">⚡ Active clusters are those currently in RUNNING state</p>
+                  <p className="text-xs text-cyan-800">🏗️ Total number of clusters in the selected time period or filter</p>
                 </div>
               </div>
             )}

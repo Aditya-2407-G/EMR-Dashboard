@@ -1,5 +1,12 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import type { EmrCluster, RawEmrData } from '../../shared/schema';
+import { 
+  type KPIMetrics, 
+  type DateFilterOptions, 
+  type EMRClusterRecord,
+  calculateFilteredKPIMetrics,
+  getDateRange
+} from '@/lib/data-processing';
 
 /**
  * Context for managing EMR data locally in the frontend
@@ -10,7 +17,7 @@ interface AnalyticsData {
   totalClusters: number;
   avgMemoryUsage: number;
   totalRuntimeHours: number;
-  capacityUsed: number;
+  totalRemainingCapacityGB: number;  // Fixed: was incorrectly named "capacityUsed"
   activeClusters: number;
   clustersByState: Record<string, number>;
   clustersByName: Record<string, number>;
@@ -24,6 +31,10 @@ interface EmrDataContextType {
   processJsonFile: (file: File) => Promise<void>;
   clearData: () => void;
   refetch: () => void;
+  // New filtered analytics functionality
+  getFilteredKPIMetrics: (dateFilter: DateFilterOptions) => KPIMetrics;
+  getDataDateRange: () => { startDate: Date; endDate: Date } | null;
+  getRawClusterData: () => EMRClusterRecord[];
 }
 
 const EmrDataContext = createContext<EmrDataContextType | undefined>(undefined);
@@ -37,7 +48,7 @@ export function EmrDataProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Calculates analytics data from the current clusters
+   * Calculates analytics data from the current clusters with improved error handling
    */
   const calculateAnalytics = useCallback((clusterData: EmrCluster[]): AnalyticsData => {
     if (clusterData.length === 0) {
@@ -45,7 +56,7 @@ export function EmrDataProvider({ children }: { children: React.ReactNode }) {
         totalClusters: 0,
         avgMemoryUsage: 0,
         totalRuntimeHours: 0,
-        capacityUsed: 0,
+        totalRemainingCapacityGB: 0,  // Fixed: correctly named
         activeClusters: 0,
         clustersByState: {},
         clustersByName: {},
@@ -54,22 +65,51 @@ export function EmrDataProvider({ children }: { children: React.ReactNode }) {
 
     const activeClusters = clusterData.filter(c => c.state === 'RUNNING' || c.state === 'WAITING').length;
     
-    const totalMemoryUsage = clusterData.reduce((sum, cluster) => {
-      if (cluster.maxMemoryTotalMB && cluster.maxMemoryTotalMB > 0) {
-        return sum + ((cluster.maxMemoryAllocatedMB || 0) / cluster.maxMemoryTotalMB) * 100;
+    // Calculate memory usage with validation
+    let totalMemoryUsage = 0;
+    let validMemoryEntries = 0;
+    
+    clusterData.forEach(cluster => {
+      const totalMB = cluster.maxMemoryTotalMB || 0;
+      const allocatedMB = cluster.maxMemoryAllocatedMB || 0;
+      
+      // Validate data consistency
+      if (totalMB > 0 && allocatedMB <= totalMB) {
+        totalMemoryUsage += (allocatedMB / totalMB) * 100;
+        validMemoryEntries++;
+      } else if (totalMB > 0 && allocatedMB > totalMB) {
+        console.warn(`Data inconsistency: Allocated memory (${allocatedMB}MB) exceeds total memory (${totalMB}MB) for cluster ${cluster.clusterId}`);
+        // Use 100% in this case
+        totalMemoryUsage += 100;
+        validMemoryEntries++;
       }
-      return sum;
-    }, 0);
+    });
 
-    const totalRuntimeHours = clusterData.reduce((sum, cluster) => {
-      if (cluster.endDateTime) {
-        const runtime = Math.abs(new Date(cluster.endDateTime).getTime() - new Date(cluster.creationDateTime).getTime()) / (1000 * 60 * 60);
-        return sum + runtime;
+    // Calculate runtime with proper error handling
+    let totalRuntimeHours = 0;
+    clusterData.forEach(cluster => {
+      if (cluster.endDateTime && cluster.creationDateTime) {
+        try {
+          const startTime = new Date(cluster.creationDateTime).getTime();
+          const endTime = new Date(cluster.endDateTime).getTime();
+          
+          if (!isNaN(startTime) && !isNaN(endTime) && endTime >= startTime) {
+            const runtime = (endTime - startTime) / (1000 * 60 * 60);
+            totalRuntimeHours += runtime;
+          } else {
+            console.warn(`Invalid date range for cluster ${cluster.clusterId}: ${cluster.creationDateTime} to ${cluster.endDateTime}`);
+          }
+        } catch (error) {
+          console.warn(`Error calculating runtime for cluster ${cluster.clusterId}:`, error);
+        }
       }
-      return sum;
-    }, 0);
+    });
 
-    const capacityUsed = clusterData.reduce((sum, cluster) => sum + (cluster.minCapacityRemainingGB || 0), 0);
+    // Calculate total remaining capacity (corrected from misleading "capacityUsed")
+    const totalRemainingCapacityGB = clusterData.reduce((sum, cluster) => {
+      const capacity = cluster.minCapacityRemainingGB || 0;
+      return capacity >= 0 ? sum + capacity : sum; // Only add non-negative values
+    }, 0);
 
     const clustersByState = clusterData.reduce((acc, cluster) => {
       acc[cluster.state] = (acc[cluster.state] || 0) + 1;
@@ -83,9 +123,9 @@ export function EmrDataProvider({ children }: { children: React.ReactNode }) {
 
     return {
       totalClusters: clusterData.length,
-      avgMemoryUsage: clusterData.length > 0 ? totalMemoryUsage / clusterData.length : 0,
+      avgMemoryUsage: validMemoryEntries > 0 ? totalMemoryUsage / validMemoryEntries : 0,
       totalRuntimeHours,
-      capacityUsed,
+      totalRemainingCapacityGB,  // Fixed: correctly named and calculated
       activeClusters,
       clustersByState,
       clustersByName,
@@ -179,6 +219,43 @@ export function EmrDataProvider({ children }: { children: React.ReactNode }) {
     setError(null);
   }, []);
 
+  /**
+   * Converts EmrCluster data to EMRClusterRecord format for data processing
+   */
+  const getRawClusterData = useCallback((): EMRClusterRecord[] => {
+    return clusters.map(cluster => ({
+      earliest_time: '', // Not used in current calculations
+      latest_time: '', // Not used in current calculations
+      ClusterName: cluster.clusterName,
+      ClusterId: cluster.clusterId,
+      CreationDateTime: cluster.creationDateTime.toISOString(),
+      EndDateTime: cluster.endDateTime ? cluster.endDateTime.toISOString() : '',
+      MinCapacityRemainingGB: cluster.minCapacityRemainingGB || 0,
+      MinYARNMemoryAvailablePercentage: cluster.minYARNMemoryAvailablePercentage || 0,
+      MaxMemoryAllocatedMB: cluster.maxMemoryAllocatedMB || 0,
+      MaxMemoryTotalMB: cluster.maxMemoryTotalMB || 0,
+      MaxMRUnhealthyNodes: cluster.maxMRUnhealthyNodes || 0,
+      State: cluster.state
+    }));
+  }, [clusters]);
+
+  /**
+   * Gets the date range of available data
+   */
+  const getDataDateRange = useCallback(() => {
+    if (clusters.length === 0) return null;
+    const rawData = getRawClusterData();
+    return getDateRange(rawData);
+  }, [clusters, getRawClusterData]);
+
+  /**
+   * Calculates filtered KPI metrics based on date range
+   */
+  const getFilteredKPIMetrics = useCallback((dateFilter: DateFilterOptions): KPIMetrics => {
+    const rawData = getRawClusterData();
+    return calculateFilteredKPIMetrics(rawData, dateFilter);
+  }, [getRawClusterData]);
+
   // Calculate analytics whenever clusters change
   const analytics = React.useMemo(() => calculateAnalytics(clusters), [clusters, calculateAnalytics]);
 
@@ -190,6 +267,9 @@ export function EmrDataProvider({ children }: { children: React.ReactNode }) {
     processJsonFile,
     clearData,
     refetch,
+    getFilteredKPIMetrics,
+    getDataDateRange,
+    getRawClusterData,
   };
 
   return (
