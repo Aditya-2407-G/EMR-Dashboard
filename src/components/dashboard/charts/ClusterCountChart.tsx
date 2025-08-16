@@ -26,7 +26,8 @@ import {
   type KPIMetrics
 } from '@/lib/data-processing';
 import { format, parseISO } from 'date-fns';
-import { Building } from 'lucide-react';
+import { Building, Expand } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface ClusterCountChartProps {
   data: Array<{ date: string } & KPIMetrics>;
@@ -34,6 +35,8 @@ interface ClusterCountChartProps {
   dateFilter: DateFilterOptions;
   onDataPointClick?: (date: string, count: number) => void;
   onClusterClick?: (clusterName: string) => void;
+  selectedClusterName?: string | null;
+  onExpand?: () => void;
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f43f5e', '#06b6d4', '#f59e0b', '#ef4444', '#84cc16'];
@@ -46,7 +49,9 @@ export function ClusterCountChart({
   clusterBreakdown = [],
   dateFilter,
   onDataPointClick,
-  onClusterClick
+  onClusterClick,
+  selectedClusterName,
+  onExpand
 }: ClusterCountChartProps) {
   
   // Format data for time series chart
@@ -123,9 +128,22 @@ export function ClusterCountChart({
           <CardTitle className="text-lg font-semibold text-slate-900 flex items-center">
             <Building className="w-5 h-5 mr-2 text-cyan-600" />
             Cluster Count Over Time
-            <span className="ml-auto text-sm font-normal text-slate-500">
-              {dateFilter.type === 'weekly' ? 'Weekly' : 'Daily'} View
-            </span>
+            <div className="ml-auto flex items-center space-x-2">
+              <span className="text-sm font-normal text-slate-500">
+                {dateFilter.type === 'weekly' ? 'Weekly' : 'Daily'} View
+              </span>
+              {onExpand && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="text-slate-400 hover:text-slate-600"
+                  onClick={onExpand}
+                  title="Expand chart"
+                >
+                  <Expand className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
           </CardTitle>
         </CardHeader>
         
@@ -239,13 +257,29 @@ export function ClusterCountChart({
                     dataKey="count"
                     onClick={handlePieClick}
                   >
-                    {clusterBreakdown.map((_, index) => (
-                      <Cell 
-                        key={`cell-${index}`} 
-                        fill={COLORS[index % COLORS.length]}
-                        className="cursor-pointer hover:opacity-80"
-                      />
-                    ))}
+                    {clusterBreakdown.map((entry, index) => {
+                      const isSelected = selectedClusterName === entry.name;
+                      const hasSelection = selectedClusterName !== null && selectedClusterName !== undefined;
+                      const shouldFade = hasSelection && !isSelected;
+                      
+                      return (
+                        <Cell 
+                          key={`cell-${index}`} 
+                          fill={COLORS[index % COLORS.length]}
+                          className="cursor-pointer hover:opacity-80"
+                          data-chart-element="pie-segment"
+                          style={{
+                            opacity: shouldFade ? 0.25 : 1,
+                            stroke: isSelected ? "#1f2937" : "transparent",
+                            strokeWidth: isSelected ? 3 : 0,
+                            filter: isSelected ? 'brightness(1.1) drop-shadow(0 0 8px rgba(59, 130, 246, 0.5))' : shouldFade ? 'brightness(0.7)' : 'none',
+                            transform: isSelected ? 'scale(1.05)' : shouldFade ? 'scale(0.98)' : 'scale(1)',
+                            transformOrigin: '50% 50%',
+                            transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+                          }}
+                        />
+                      );
+                    })}
                   </Pie>
                   <Tooltip content={<PieTooltip />} />
                 </PieChart>
@@ -254,24 +288,44 @@ export function ClusterCountChart({
             
             {/* Legend */}
             <div className="mt-4 space-y-2">
-              {clusterBreakdown.slice(0, 6).map((item, index) => (
-                <div 
-                  key={item.name}
-                  className="flex items-center justify-between text-sm cursor-pointer hover:bg-slate-50 p-2 rounded"
-                  onClick={() => onClusterClick?.(item.name)}
-                >
-                  <div className="flex items-center">
-                    <div 
-                      className="w-3 h-3 rounded mr-2"
-                      style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                    />
-                    <span className="text-slate-700 truncate">{item.name}</span>
+              {clusterBreakdown.slice(0, 6).map((item, index) => {
+                const isSelected = selectedClusterName === item.name;
+                const hasSelection = selectedClusterName !== null && selectedClusterName !== undefined;
+                const shouldFade = hasSelection && !isSelected;
+                
+                return (
+                  <div 
+                    key={item.name}
+                    className="flex items-center justify-between text-sm cursor-pointer hover:bg-slate-50 p-2 rounded"
+                    onClick={() => onClusterClick?.(item.name)}
+                    data-chart-element="legend-item"
+                    style={{
+                      opacity: shouldFade ? 0.35 : 1,
+                      transform: isSelected ? 'scale(1.02)' : shouldFade ? 'scale(0.98)' : 'scale(1)',
+                      backgroundColor: isSelected ? '#f8fafc' : 'transparent',
+                      border: isSelected ? '1px solid #e2e8f0' : '1px solid transparent',
+                      filter: shouldFade ? 'brightness(0.8)' : 'none',
+                      transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+                    }}
+                  >
+                    <div className="flex items-center">
+                      <div 
+                        className="w-3 h-3 rounded mr-2"
+                        style={{ 
+                          backgroundColor: COLORS[index % COLORS.length],
+                          boxShadow: isSelected ? '0 0 8px rgba(59, 130, 246, 0.5)' : 'none'
+                        }}
+                      />
+                      <span className={`truncate ${isSelected ? 'font-semibold text-slate-900' : 'text-slate-700'}`}>
+                        {item.name}
+                      </span>
+                    </div>
+                    <div className={`font-medium ${isSelected ? 'text-slate-900' : 'text-slate-600'}`}>
+                      {item.count} ({item.percentage.toFixed(1)}%)
+                    </div>
                   </div>
-                  <div className="text-slate-600 font-medium">
-                    {item.count} ({item.percentage.toFixed(1)}%)
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               
               {clusterBreakdown.length > 6 && (
                 <div className="text-xs text-slate-500 text-center pt-2">

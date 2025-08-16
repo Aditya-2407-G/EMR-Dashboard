@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { FileUpload } from "@/components/dashboard/FileUpload";
 import { KPICards } from "@/components/dashboard/KPICards";
 import { DateRangeFilter, type DateFilterOption } from "@/components/dashboard/DateRangeFilter";
-import { MetricsChartGrid } from "@/components/dashboard/charts/MetricsTimeSeriesChart";
+import { MetricsChartGrid, MetricsTimeSeriesChart } from "@/components/dashboard/charts/MetricsTimeSeriesChart";
 import { ClusterCountChart } from "@/components/dashboard/charts/ClusterCountChart";
 import { MemoryUsageChart } from "@/components/dashboard/charts/MemoryUsageChart";
 import { ClusterDistributionChart } from "@/components/dashboard/charts/ClusterDistributionChart";
@@ -11,6 +11,7 @@ import { CapacityUsageChart } from "@/components/dashboard/charts/CapacityUsageC
 import { RuntimeAnalysisChart } from "@/components/dashboard/charts/RuntimeAnalysisChart";
 import { ClusterTable } from "@/components/dashboard/ClusterTable";
 import { DrillDownModal } from "@/components/dashboard/DrillDownModal";
+import { ChartExpandModal, useChartExpand } from "@/components/dashboard/ChartExpandModal";
 import { useEmrData } from "@/hooks/useEmrData";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,7 +20,8 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   calculateDailyKPIMetrics, 
   calculateWeeklyKPIMetrics, 
-  type DateFilterOptions 
+  type DateFilterOptions,
+  type KPIMetrics
 } from "@/lib/data-processing";
 
 export default function Dashboard() {
@@ -53,6 +55,7 @@ export default function Dashboard() {
   });
   const [activeTab, setActiveTab] = useState<'overview' | 'metrics'>('overview');
   const { toast } = useToast();
+  const { expandedChart, openChart, closeChart } = useChartExpand();
 
   // Update filtered clusters when main clusters data changes
   React.useEffect(() => {
@@ -108,12 +111,44 @@ export default function Dashboard() {
     }
   }, [dateFilter, getRawClusterData, clusters.length]);
 
-  // Calculate cluster breakdown for the cluster count chart
-  const clusterBreakdown = useMemo(() => {
+  // Calculate filtered time series data for selected cluster
+  const filteredTimeSeriesData = useMemo(() => {
+    if (!dateFilter || clusters.length === 0 || !selectedClusterName) return timeSeriesData;
+    
+    // Filter raw data to only include selected cluster
+    const allRawData = getRawClusterData();
+    const filteredRawData = allRawData.filter(cluster => cluster.ClusterName === selectedClusterName);
+    
+    if (filteredRawData.length === 0) return timeSeriesData;
+    
+    const dateFilterOptions: DateFilterOptions = {
+      type: dateFilter.type,
+      startDate: dateFilter.range.startDate,
+      endDate: dateFilter.range.endDate
+    };
+    
+    // Calculate metrics using only the selected cluster's data
+    if (dateFilter.type === 'weekly') {
+      const weeklyData = calculateWeeklyKPIMetrics(filteredRawData, dateFilterOptions);
+      return weeklyData.map(item => ({
+        date: item.week,
+        avgMemoryUsagePercent: item.avgMemoryUsagePercent,
+        avgYARNMemoryAvailablePercent: item.avgYARNMemoryAvailablePercent,
+        avgRuntimeHours: item.avgRuntimeHours,
+        avgRemainingCapacityGB: item.avgRemainingCapacityGB,
+        clusterCount: item.clusterCount
+      }));
+    } else {
+      return calculateDailyKPIMetrics(filteredRawData, dateFilterOptions);
+    }
+  }, [dateFilter, getRawClusterData, clusters.length, selectedClusterName, timeSeriesData]);
+
+  // Calculate cluster breakdown for metrics tab (always shows all clusters with fade effects)
+  const metricsClusterBreakdown = useMemo(() => {
     if (!dateFilter || clusters.length === 0) return [];
     
     const clusterCounts = new Map<string, number>();
-    filteredClusters.forEach(cluster => {
+    clusters.forEach(cluster => {
       clusterCounts.set(cluster.clusterName, (clusterCounts.get(cluster.clusterName) || 0) + 1);
     });
     
@@ -126,7 +161,7 @@ export default function Dashboard() {
         percentage: (count / total) * 100
       }))
       .sort((a, b) => b.count - a.count);
-  }, [dateFilter, filteredClusters]);
+  }, [dateFilter, clusters]);
 
   // Get available data date range
   const dataDateRange = useMemo(() => {
@@ -167,8 +202,24 @@ export default function Dashboard() {
   };
 
   const handleChartFilter = (type: string, value: string) => {
-    // Prevent update if same filter is applied
-    if (activeFilter?.type === type && activeFilter?.value === value) return;
+    // Check if clicking the same filter - toggle to reset
+    if (activeFilter?.type === type && activeFilter?.value === value) {
+      // Add smooth transition effect for reset
+      const elementsToAnimate = document.querySelectorAll('[data-chart-element]');
+      elementsToAnimate.forEach(el => {
+        (el as HTMLElement).style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+      });
+      
+      // Reset filter
+      setActiveFilter(null);
+      setSelectedClusterName(null);
+      setFilteredClusters(clusters);
+      toast({
+        title: "Filter reset",
+        description: `Showing all data`,
+      });
+      return;
+    }
     
     const newFilter = { type, value };
     setActiveFilter(newFilter);
@@ -187,6 +238,12 @@ export default function Dashboard() {
   };
 
   const clearFilters = () => {
+    // Add smooth transition effect
+    const elementsToAnimate = document.querySelectorAll('[data-chart-element]');
+    elementsToAnimate.forEach(el => {
+      (el as HTMLElement).style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+    });
+    
     setActiveFilter(null);
     setSelectedClusterName(null);
     // Reset to default daily view instead of null
@@ -227,6 +284,25 @@ export default function Dashboard() {
 
   // Handle cluster name clicks from charts
   const handleClusterClick = (clusterName: string) => {
+    // Check if clicking the same cluster - toggle to reset
+    if (selectedClusterName === clusterName) {
+      // Add smooth transition effect for reset
+      const elementsToAnimate = document.querySelectorAll('[data-chart-element]');
+      elementsToAnimate.forEach(el => {
+        (el as HTMLElement).style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+      });
+      
+      // Reset filter
+      setActiveFilter(null);
+      setSelectedClusterName(null);
+      setFilteredClusters(clusters);
+      toast({
+        title: "Filter reset",
+        description: `Showing all data`,
+      });
+      return;
+    }
+    
     setSelectedClusterName(clusterName);
     const clusterData = clusters.filter(c => c.clusterName === clusterName);
     setFilteredClusters(clusterData);
@@ -235,6 +311,45 @@ export default function Dashboard() {
       title: `Filtered by cluster`,
       description: `Showing data for: ${clusterName}`,
     });
+  };
+
+  // Handle chart expansion
+  const handleChartExpand = (chartTitle: string, chartComponent: React.ReactNode, chartData?: any) => {
+    openChart(chartTitle, chartComponent, chartData);
+  };
+
+  // Helper functions for metrics chart configuration
+  const getMetricColor = (metric: keyof KPIMetrics): string => {
+    const colorMap: Record<string, string> = {
+      'avgMemoryUsagePercent': 'emerald',
+      'avgYARNMemoryAvailablePercent': 'blue',
+      'avgRuntimeHours': 'purple',
+      'avgRemainingCapacityGB': 'rose'
+    };
+    return colorMap[metric] || 'blue';
+  };
+
+  const getMetricUnit = (metric: keyof KPIMetrics): string => {
+    const unitMap: Record<string, string> = {
+      'avgMemoryUsagePercent': '%',
+      'avgYARNMemoryAvailablePercent': '%',
+      'avgRuntimeHours': 'h',
+      'avgRemainingCapacityGB': 'GB'
+    };
+    return unitMap[metric] || '';
+  };
+
+  const getMetricReferenceLine = (metric: keyof KPIMetrics): boolean => {
+    return ['avgMemoryUsagePercent', 'avgYARNMemoryAvailablePercent', 'avgRemainingCapacityGB'].includes(metric);
+  };
+
+  const getMetricReferenceValue = (metric: keyof KPIMetrics): number | undefined => {
+    const referenceMap: Record<string, number> = {
+      'avgMemoryUsagePercent': 80,
+      'avgYARNMemoryAvailablePercent': 20,
+      'avgRemainingCapacityGB': 200
+    };
+    return referenceMap[metric];
   };
 
   const handleExportDashboard = () => {
@@ -435,6 +550,13 @@ export default function Dashboard() {
                 <MemoryUsageChart 
                   clusters={filteredClusters} 
                   onDataPointClick={(clusterId) => setSelectedClusterId(clusterId)}
+                  onExpand={() => handleChartExpand(
+                    'Memory Usage Trends',
+                    <MemoryUsageChart 
+                      clusters={filteredClusters} 
+                      onDataPointClick={(clusterId) => setSelectedClusterId(clusterId)}
+                    />
+                  )}
                 />
               </div>
               
@@ -442,22 +564,52 @@ export default function Dashboard() {
                 clusters={clusters} 
                 onSegmentClick={(clusterName) => handleChartFilter('clusterName', clusterName)}
                 selectedClusterName={selectedClusterName}
+                onExpand={() => handleChartExpand(
+                  'Cluster Distribution',
+                  <ClusterDistributionChart 
+                    clusters={clusters} 
+                    onSegmentClick={(clusterName) => handleChartFilter('clusterName', clusterName)}
+                    selectedClusterName={selectedClusterName}
+                  />
+                )}
               />
               
               <YarnMemoryChart 
                 clusters={filteredClusters}
                 onDataPointClick={(clusterId) => setSelectedClusterId(clusterId)}
+                onExpand={() => handleChartExpand(
+                  'YARN Memory Available',
+                  <YarnMemoryChart 
+                    clusters={filteredClusters}
+                    onDataPointClick={(clusterId) => setSelectedClusterId(clusterId)}
+                  />
+                )}
               />
               
               <CapacityUsageChart 
                 clusters={filteredClusters}
                 onDataPointClick={(clusterId) => setSelectedClusterId(clusterId)}
+                onExpand={() => handleChartExpand(
+                  'Memory Capacity vs Usage',
+                  <CapacityUsageChart 
+                    clusters={filteredClusters}
+                    onDataPointClick={(clusterId) => setSelectedClusterId(clusterId)}
+                  />
+                )}
               />
               
               <RuntimeAnalysisChart 
-                clusters={filteredClusters}
+                clusters={clusters}
                 onBarClick={(clusterName) => handleChartFilter('clusterName', clusterName)}
                 selectedClusterName={selectedClusterName}
+                onExpand={() => handleChartExpand(
+                  'Runtime Analysis',
+                  <RuntimeAnalysisChart 
+                    clusters={clusters}
+                    onBarClick={(clusterName) => handleChartFilter('clusterName', clusterName)}
+                    selectedClusterName={selectedClusterName}
+                  />
+                )}
               />
             </div>
 
@@ -473,10 +625,33 @@ export default function Dashboard() {
           <TabsContent value="metrics" className="space-y-6">
             {dateFilter && timeSeriesData.length > 0 ? (
               <>
+                {/* Active Filter Indicator */}
+                {selectedClusterName && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 bg-blue-600 rounded-full"></div>
+                        <span className="text-sm font-medium text-blue-800">
+                          Filtered by Cluster: {selectedClusterName}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleClusterClick(selectedClusterName)}
+                        className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      >
+                        Clear Filter
+                      </button>
+                    </div>
+                    <p className="text-xs text-blue-600 mt-1">
+                      All metrics below show data only for the selected cluster
+                    </p>
+                  </div>
+                )}
+
                 {/* Cluster Count Chart */}
                 <ClusterCountChart
-                  data={timeSeriesData}
-                  clusterBreakdown={clusterBreakdown}
+                  data={filteredTimeSeriesData}
+                  clusterBreakdown={metricsClusterBreakdown}
                   dateFilter={{
                     type: dateFilter.type,
                     startDate: dateFilter.range.startDate,
@@ -486,17 +661,55 @@ export default function Dashboard() {
                     handleMetricDataPointClick('Cluster Count', date, count)
                   }
                   onClusterClick={handleClusterClick}
+                  selectedClusterName={selectedClusterName}
+                  onExpand={() => handleChartExpand(
+                    'Cluster Count Over Time',
+                    <ClusterCountChart
+                      data={filteredTimeSeriesData}
+                      clusterBreakdown={metricsClusterBreakdown}
+                      dateFilter={{
+                        type: dateFilter.type,
+                        startDate: dateFilter.range.startDate,
+                        endDate: dateFilter.range.endDate
+                      }}
+                      onDataPointClick={(date, count) => 
+                        handleMetricDataPointClick('Cluster Count', date, count)
+                      }
+                      onClusterClick={handleClusterClick}
+                      selectedClusterName={selectedClusterName}
+                    />,
+                    filteredTimeSeriesData
+                  )}
                 />
 
                 {/* Metrics Grid */}
                 <MetricsChartGrid
-                  data={timeSeriesData}
+                  data={filteredTimeSeriesData}
                   dateFilter={{
                     type: dateFilter.type,
                     startDate: dateFilter.range.startDate,
                     endDate: dateFilter.range.endDate
                   }}
                   onDataPointClick={handleMetricDataPointClick}
+                  onChartExpand={(title, metric) => handleChartExpand(
+                    title,
+                    <MetricsTimeSeriesChart
+                      data={filteredTimeSeriesData}
+                      metric={metric}
+                      title={title}
+                      color={getMetricColor(metric)}
+                      unit={getMetricUnit(metric)}
+                      dateFilter={{
+                        type: dateFilter.type,
+                        startDate: dateFilter.range.startDate,
+                        endDate: dateFilter.range.endDate
+                      }}
+                      onDataPointClick={(date: string, value: number) => handleMetricDataPointClick(metric.toString(), date, value)}
+                      showReferenceLine={getMetricReferenceLine(metric)}
+                      referenceValue={getMetricReferenceValue(metric)}
+                    />,
+                    filteredTimeSeriesData
+                  )}
                 />
               </>
             ) : (
@@ -523,6 +736,16 @@ export default function Dashboard() {
         onClose={() => setSelectedClusterId(null)}
         allClusters={clusters}
       />
+
+      {/* Chart Expand Modal */}
+      <ChartExpandModal
+        isOpen={expandedChart.isOpen}
+        onClose={closeChart}
+        title={expandedChart.title}
+        chartData={expandedChart.data}
+      >
+        {expandedChart.content}
+      </ChartExpandModal>
     </div>
   );
 }

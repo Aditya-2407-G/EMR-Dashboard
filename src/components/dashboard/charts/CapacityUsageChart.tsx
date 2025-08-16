@@ -8,9 +8,10 @@ import type { EmrCluster } from "../../../../shared/schema";
 interface CapacityUsageChartProps {
   clusters: EmrCluster[];
   onDataPointClick: (clusterId: string) => void;
+  onExpand?: () => void;
 }
 
-export function CapacityUsageChart({ clusters, onDataPointClick }: CapacityUsageChartProps) {
+export function CapacityUsageChart({ clusters, onDataPointClick, onExpand }: CapacityUsageChartProps) {
   const data = processCapacityUsageData(clusters);
 
   const handleDataPointClick = (data: any) => {
@@ -26,7 +27,13 @@ export function CapacityUsageChart({ clusters, onDataPointClick }: CapacityUsage
     <Card className="bg-white shadow-sm border border-slate-200" data-testid="chart-capacity-usage">
       <CardHeader className="flex flex-row items-center justify-between pb-4">
         <CardTitle className="text-lg font-semibold text-slate-900">Memory Capacity vs Usage</CardTitle>
-        <Button variant="ghost" size="sm" className="text-slate-400 hover:text-slate-600">
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="text-slate-400 hover:text-slate-600"
+          onClick={onExpand}
+          title="Expand chart"
+        >
           <Expand className="w-4 h-4" />
         </Button>
       </CardHeader>

@@ -9,11 +9,12 @@ interface ClusterDistributionChartProps {
   clusters: EmrCluster[];
   onSegmentClick: (clusterName: string) => void;
   selectedClusterName?: string | null;
+  onExpand?: () => void;
 }
 
 const COLORS = ['#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
-export function ClusterDistributionChart({ clusters, onSegmentClick, selectedClusterName }: ClusterDistributionChartProps) {
+export function ClusterDistributionChart({ clusters, onSegmentClick, selectedClusterName, onExpand }: ClusterDistributionChartProps) {
   const data = processClusterDistributionData(clusters);
 
   const handleCellClick = (entry: any) => {
@@ -26,7 +27,13 @@ export function ClusterDistributionChart({ clusters, onSegmentClick, selectedClu
     <Card className="bg-white shadow-sm border border-slate-200" data-testid="chart-cluster-distribution">
       <CardHeader className="flex flex-row items-center justify-between pb-4">
         <CardTitle className="text-lg font-semibold text-slate-900">Cluster Distribution</CardTitle>
-        <Button variant="ghost" size="sm" className="text-slate-400 hover:text-slate-600">
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="text-slate-400 hover:text-slate-600"
+          onClick={onExpand}
+          title="Expand chart"
+        >
           <Expand className="w-4 h-4" />
         </Button>
       </CardHeader>
@@ -47,17 +54,22 @@ export function ClusterDistributionChart({ clusters, onSegmentClick, selectedClu
               >
                 {data.map((entry, index) => {
                   const isSelected = selectedClusterName === entry.name;
+                  const hasSelection = selectedClusterName !== null && selectedClusterName !== undefined;
+                  const shouldFade = hasSelection && !isSelected;
+                  
                   return (
                     <Cell 
                       key={`cell-${index}`} 
                       fill={COLORS[index % COLORS.length]}
                       stroke={isSelected ? "#1f2937" : "transparent"}
                       strokeWidth={isSelected ? 3 : 0}
+                      data-chart-element="pie-segment"
                       style={{
-                        filter: isSelected ? 'brightness(1.1) drop-shadow(0 0 8px rgba(59, 130, 246, 0.5))' : 'none',
-                        transform: isSelected ? 'scale(1.05)' : 'scale(1)',
+                        opacity: shouldFade ? 0.25 : 1,
+                        filter: isSelected ? 'brightness(1.1) drop-shadow(0 0 8px rgba(59, 130, 246, 0.5))' : shouldFade ? 'brightness(0.7)' : 'none',
+                        transform: isSelected ? 'scale(1.05)' : shouldFade ? 'scale(0.98)' : 'scale(1)',
                         transformOrigin: '50% 50%',
-                        transition: 'all 0.3s ease'
+                        transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
                       }}
                     />
                   );

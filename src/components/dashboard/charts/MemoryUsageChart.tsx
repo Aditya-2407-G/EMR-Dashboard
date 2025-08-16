@@ -9,9 +9,10 @@ import type { EmrCluster } from "../../../../shared/schema";
 interface MemoryUsageChartProps {
   clusters: EmrCluster[];
   onDataPointClick: (clusterId: string) => void;
+  onExpand?: () => void;
 }
 
-export function MemoryUsageChart({ clusters, onDataPointClick }: MemoryUsageChartProps) {
+export function MemoryUsageChart({ clusters, onDataPointClick, onExpand }: MemoryUsageChartProps) {
   const data = processMemoryUsageData(clusters);
 
   const handleDataPointClick = (data: any) => {
@@ -31,7 +32,13 @@ export function MemoryUsageChart({ clusters, onDataPointClick }: MemoryUsageChar
         </div>
         <div className="flex items-center space-x-2">
           <Badge variant="secondary" className="bg-blue-100 text-blue-800">Time Series</Badge>
-          <Button variant="ghost" size="sm" className="text-slate-400 hover:text-slate-600">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="text-slate-400 hover:text-slate-600"
+            onClick={onExpand}
+            title="Expand chart"
+          >
             <Expand className="w-4 h-4" />
           </Button>
         </div>

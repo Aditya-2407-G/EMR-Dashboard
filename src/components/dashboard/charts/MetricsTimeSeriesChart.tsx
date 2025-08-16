@@ -1,4 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Expand } from 'lucide-react';
 import { 
   LineChart, 
   Line, 
@@ -26,6 +28,7 @@ interface MetricsTimeSeriesChartProps {
   height?: number;
   showReferenceLine?: boolean;
   referenceValue?: number;
+  onExpand?: () => void;
 }
 
 /**
@@ -40,7 +43,8 @@ export function MetricsTimeSeriesChart({
   dateFilter,
   onDataPointClick,
   showReferenceLine = false,
-  referenceValue
+  referenceValue,
+  onExpand
 }: MetricsTimeSeriesChartProps) {
   
   // Format data for chart
@@ -119,9 +123,22 @@ export function MetricsTimeSeriesChart({
       <CardHeader className="pb-4">
         <CardTitle className="text-lg font-semibold text-slate-900 flex items-center justify-between">
           <span>{title}</span>
-          <span className="text-sm font-normal text-slate-500">
-            {dateFilter.type === 'weekly' ? 'Weekly' : 'Daily'} View
-          </span>
+          <div className="flex items-center space-x-2">
+            <span className="text-sm font-normal text-slate-500">
+              {dateFilter.type === 'weekly' ? 'Weekly' : 'Daily'} View
+            </span>
+            {onExpand && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="text-slate-400 hover:text-slate-600"
+                onClick={onExpand}
+                title="Expand chart"
+              >
+                <Expand className="w-4 h-4" />
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       
@@ -222,12 +239,14 @@ interface MetricsChartGridProps {
   data: Array<{ date: string } & KPIMetrics>;
   dateFilter: DateFilterOptions;
   onDataPointClick?: (metric: keyof KPIMetrics, date: string, value: number) => void;
+  onChartExpand?: (title: string, metric: keyof KPIMetrics) => void;
 }
 
 export function MetricsChartGrid({ 
   data, 
   dateFilter, 
-  onDataPointClick 
+  onDataPointClick,
+  onChartExpand 
 }: MetricsChartGridProps) {
   
   const chartConfigs = [
@@ -280,6 +299,7 @@ export function MetricsChartGrid({
           }
           showReferenceLine={config.showReferenceLine}
           referenceValue={config.referenceValue}
+          onExpand={() => onChartExpand?.(config.title, config.metric)}
         />
       ))}
     </div>

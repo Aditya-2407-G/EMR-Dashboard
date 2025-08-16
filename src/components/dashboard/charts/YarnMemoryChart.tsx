@@ -8,9 +8,10 @@ import type { EmrCluster } from "../../../../shared/schema";
 interface YarnMemoryChartProps {
   clusters: EmrCluster[];
   onDataPointClick: (clusterId: string) => void;
+  onExpand?: () => void;
 }
 
-export function YarnMemoryChart({ clusters, onDataPointClick }: YarnMemoryChartProps) {
+export function YarnMemoryChart({ clusters, onDataPointClick, onExpand }: YarnMemoryChartProps) {
   const data = processYarnMemoryData(clusters);
 
   const handleDataPointClick = (data: any) => {
@@ -26,7 +27,13 @@ export function YarnMemoryChart({ clusters, onDataPointClick }: YarnMemoryChartP
     <Card className="bg-white shadow-sm border border-slate-200" data-testid="chart-yarn-memory">
       <CardHeader className="flex flex-row items-center justify-between pb-4">
         <CardTitle className="text-lg font-semibold text-slate-900">YARN Memory Available</CardTitle>
-        <Button variant="ghost" size="sm" className="text-slate-400 hover:text-slate-600">
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="text-slate-400 hover:text-slate-600"
+          onClick={onExpand}
+          title="Expand chart"
+        >
           <Expand className="w-4 h-4" />
         </Button>
       </CardHeader>

@@ -9,9 +9,10 @@ interface RuntimeAnalysisChartProps {
   clusters: EmrCluster[];
   onBarClick: (clusterName: string) => void;
   selectedClusterName?: string | null;
+  onExpand?: () => void;
 }
 
-export function RuntimeAnalysisChart({ clusters, onBarClick, selectedClusterName }: RuntimeAnalysisChartProps) {
+export function RuntimeAnalysisChart({ clusters, onBarClick, selectedClusterName, onExpand }: RuntimeAnalysisChartProps) {
   const data = processRuntimeAnalysisData(clusters);
 
   const handleBarClick = (data: any) => {
@@ -27,7 +28,13 @@ export function RuntimeAnalysisChart({ clusters, onBarClick, selectedClusterName
     <Card className="bg-white shadow-sm border border-slate-200" data-testid="chart-runtime-analysis">
       <CardHeader className="flex flex-row items-center justify-between pb-4">
         <CardTitle className="text-lg font-semibold text-slate-900">Runtime Analysis</CardTitle>
-        <Button variant="ghost" size="sm" className="text-slate-400 hover:text-slate-600">
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="text-slate-400 hover:text-slate-600"
+          onClick={onExpand}
+          title="Expand chart"
+        >
           <Expand className="w-4 h-4" />
         </Button>
       </CardHeader>
@@ -71,15 +78,22 @@ export function RuntimeAnalysisChart({ clusters, onBarClick, selectedClusterName
               >
                 {data.map((entry, index) => {
                   const isSelected = selectedClusterName === entry.name;
+                  const hasSelection = selectedClusterName !== null && selectedClusterName !== undefined;
+                  const shouldFade = hasSelection && !isSelected;
+                  
                   return (
                     <Cell
                       key={`cell-${index}`}
                       fill={isSelected ? "#dc2626" : "#ef4444"}
                       stroke={isSelected ? "#991b1b" : "#ef4444"}
                       strokeWidth={isSelected ? 3 : 1}
+                      data-chart-element="bar-segment"
                       style={{
-                        filter: isSelected ? 'url(#glow)' : 'none',
-                        transition: 'all 0.3s ease'
+                        opacity: shouldFade ? 0.25 : 1,
+                        filter: isSelected ? 'url(#glow)' : shouldFade ? 'brightness(0.7)' : 'none',
+                        transform: isSelected ? 'scale(1.02)' : shouldFade ? 'scale(0.98)' : 'scale(1)',
+                        transformOrigin: '50% 50%',
+                        transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
                       }}
                     />
                   );
